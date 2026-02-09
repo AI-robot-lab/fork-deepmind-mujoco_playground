@@ -12,7 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-"""Train a PPO agent using JAX on the specified environment."""
+"""Train a PPO agent using JAX on the specified environment.
+
+PL: Trenuje agenta PPO w JAX dla wybranego środowiska i zapisuje wyniki.
+"""
 
 import datetime
 import functools
@@ -173,6 +176,7 @@ _TRAINING_METRICS_STEPS = flags.DEFINE_integer(
 
 
 def get_rl_config(env_name: str) -> config_dict.ConfigDict:
+  """Dobiera konfigurację PPO odpowiednią dla typu środowiska."""
   if env_name in mujoco_playground.manipulation._envs:
     if _VISION.value:
       return manipulation_params.brax_vision_ppo_config(env_name, _IMPL.value)
@@ -196,6 +200,9 @@ def rscope_fn(full_states, obs, rew, done):
   obs: nd.array or dict obs based on env configuration
   rew: nd.array rewards
   done: nd.array done flags
+
+  PL: Funkcja zbiera statystyki z rolloutów rscope, żeby student mógł od razu
+  zobaczyć średnią nagrodę i ocenić stabilność polityki.
   """
   # Calculate cumulative rewards per episode, stopping at first done flag
   done_mask = jp.cumsum(done, axis=0)
@@ -208,16 +215,21 @@ def rscope_fn(full_states, obs, rew, done):
 
 
 def main(argv):
-  """Run training and evaluation for the specified environment."""
+  """Run training and evaluation for the specified environment.
+
+  PL: Główna ścieżka programu prowadząca od konfiguracji po zapis wideo.
+  """
 
   del argv
 
-  # Load environment configuration
+  # Krok 1: wczytaj konfigurację środowiska i wybierz backend (jax/warp).
   env_cfg = registry.get_default_config(_ENV_NAME.value)
   env_cfg["impl"] = _IMPL.value
 
+  # Krok 2: pobierz domyślne parametry PPO dla danego środowiska.
   ppo_params = get_rl_config(_ENV_NAME.value)
 
+  # Krok 3: nadpisz parametry PPO flagami CLI, aby łatwo robić eksperymenty.
   if _NUM_TIMESTEPS.present:
     ppo_params.num_timesteps = _NUM_TIMESTEPS.value
   if _PLAY_ONLY.present:
@@ -269,9 +281,11 @@ def main(argv):
   if _VISION.value:
     env_cfg.vision = True
     env_cfg.vision_config.render_batch_size = ppo_params.num_envs
+  # Krok 4: dodatkowe nadpisania konfiguracji środowiska z JSON.
   env_cfg_overrides = {}
   if _PLAYGROUND_CONFIG_OVERRIDES.value is not None:
     env_cfg_overrides = json.loads(_PLAYGROUND_CONFIG_OVERRIDES.value)
+  # Krok 5: załaduj środowisko z rejestru i gotową konfiguracją.
   env = registry.load(
       _ENV_NAME.value, config=env_cfg, config_overrides=env_cfg_overrides
   )
@@ -287,7 +301,7 @@ def main(argv):
     print(f"Environment Config Overrides:\n{env_cfg_overrides}\n")
   print(f"PPO Training Parameters:\n{ppo_params}")
 
-  # Generate unique experiment name
+  # Krok 6: wygeneruj unikalną nazwę eksperymentu do logów i checkpointów.
   now = datetime.datetime.now()
   timestamp = now.strftime("%Y%m%d-%H%M%S")
   exp_name = f"{_ENV_NAME.value}-{timestamp}"
@@ -295,12 +309,12 @@ def main(argv):
     exp_name += f"-{_SUFFIX.value}"
   print(f"Experiment name: {exp_name}")
 
-  # Set up logging directory
+  # Krok 7: przygotuj katalog na logi i pliki kontrolne.
   logdir = epath.Path("logs").resolve() / exp_name
   logdir.mkdir(parents=True, exist_ok=True)
   print(f"Logs are being stored in: {logdir}")
 
-  # Initialize Weights & Biases if required
+  # Krok 8: opcjonalnie inicjalizuj Weights & Biases dla śledzenia metryk.
   if _USE_WANDB.value and not _PLAY_ONLY.value:
     if wandb is None:
       raise ImportError(
@@ -311,11 +325,11 @@ def main(argv):
     wandb.config.update(env_cfg.to_dict())
     wandb.config.update({"env_name": _ENV_NAME.value})
 
-  # Initialize TensorBoard if required
+  # Krok 9: opcjonalnie inicjalizuj TensorBoard dla wykresów.
   if _USE_TB.value and not _PLAY_ONLY.value:
     writer = tensorboardX.SummaryWriter(logdir)
 
-  # Handle checkpoint loading
+  # Krok 10: jeśli podano checkpoint, przywróć stan treningu.
   if _LOAD_CHECKPOINT_PATH.value is not None:
     # Convert to absolute path
     ckpt_path = epath.Path(_LOAD_CHECKPOINT_PATH.value).resolve()
@@ -333,12 +347,12 @@ def main(argv):
     print("No checkpoint path provided, not restoring from checkpoint")
     restore_checkpoint_path = None
 
-  # Set up checkpoint directory
+  # Krok 11: utwórz katalog na nowe checkpointy.
   ckpt_path = logdir / "checkpoints"
   ckpt_path.mkdir(parents=True, exist_ok=True)
   print(f"Checkpoint path: {ckpt_path}")
 
-  # Save environment configuration
+  # Krok 12: zapisz konfigurację środowiska, by była odtwarzalna.
   with open(ckpt_path / "config.json", "w", encoding="utf-8") as fp:
     json.dump(env_cfg.to_dict(), fp, indent=4)
 
@@ -346,6 +360,7 @@ def main(argv):
   if "network_factory" in training_params:
     del training_params["network_factory"]
 
+  # Krok 13: wybierz fabrykę sieci (wizyjna lub klasyczna).
   network_fn = (
       ppo_networks_vision.make_ppo_networks_vision
       if _VISION.value
@@ -358,11 +373,13 @@ def main(argv):
   else:
     network_factory = network_fn
 
+  # Krok 14: dodaj losowość domenową, by ułatwić sim-to-real.
   if _DOMAIN_RANDOMIZATION.value:
     training_params["randomization_fn"] = registry.get_domain_randomizer(
         _ENV_NAME.value
     )
 
+  # Krok 15: dopasuj środowisko do treningu PPO (opcjonalnie z wizją).
   if _VISION.value:
     env = wrapper.wrap_for_brax_training(
         env,
@@ -382,6 +399,7 @@ def main(argv):
   if "num_eval_envs" in training_params:
     del training_params["num_eval_envs"]
 
+  # Krok 16: przygotuj funkcję treningu PPO z ustalonymi parametrami.
   train_fn = functools.partial(
       ppo.train,
       **training_params,
@@ -395,7 +413,7 @@ def main(argv):
 
   times = [time.monotonic()]
 
-  # Progress function for logging
+  # Krok 17: funkcja postępu zbiera metryki i wypisuje podsumowanie.
   def progress(num_steps, metrics):
     times.append(time.monotonic())
 
@@ -417,7 +435,7 @@ def main(argv):
             f" reward={metrics['episode/sum_reward']:.3f}"
         )
 
-  # Load evaluation environment.
+  # Krok 18: przygotuj środowisko ewaluacyjne (osobne od treningowego).
   eval_env = None
   if not _VISION.value:
     eval_env = registry.load(
@@ -459,7 +477,7 @@ def main(argv):
       rscope_handle.set_make_policy(make_policy)
       rscope_handle.dump_rollout(params)
 
-  # Train or load the model
+  # Krok 19: uruchom trening lub odtwórz model z checkpointu.
   make_inference_fn, params, _ = train_fn(  # pylint: disable=no-value-for-parameter
       environment=env,
       progress_fn=progress,
@@ -474,11 +492,11 @@ def main(argv):
 
   print("Starting inference...")
 
-  # Create inference function.
+  # Krok 20: przygotuj funkcję inferencji do oceny polityki.
   inference_fn = make_inference_fn(params, deterministic=True)
   jit_inference_fn = jax.jit(inference_fn)
 
-  # Run evaluation rollouts.
+  # Krok 21: uruchom rollouty ewaluacyjne i zapisz trajektorie.
   def do_rollout(rng, state):
     empty_data = state.data.__class__(
         **{k: None for k in state.data.__annotations__}
@@ -522,7 +540,7 @@ def main(argv):
         for j in range(_EPISODE_LENGTH.value)
     ]
 
-  # Render and save the rollout.
+  # Krok 22: wyrenderuj trajektorie do wideo, aby je przeanalizować.
   render_every = 2
   fps = 1.0 / eval_env.dt / render_every
   print(f"FPS for rendering: {fps}")
