@@ -61,8 +61,8 @@ pip install playground
 Poniższe kroki są identyczne z instrukcją powyżej, ale opisują *po co* wykonujemy
 poszczególne czynności:
 
-1. `uv venv --python 3.12` tworzy odizolowane środowisko, aby bibliotek nie
-   mieszać z innymi projektami.
+1. `uv venv --python 3.12` tworzy odizolowane środowisko, aby nie mieszać
+   bibliotek z innymi projektami.
 2. `source .venv/bin/activate` przełącza terminal na nowe środowisko.
 3. `uv pip install -U "jax[cuda12]"` dodaje wsparcie GPU, które jest potrzebne
    do szybkiego treningu na kartach NVIDIA.
@@ -101,7 +101,8 @@ uv --no-config run train-rsl-ppo --env_name CartpoleBalance --impl warp
 
 1. `train-jax-ppo --env_name CartpoleBalance` uruchamia trening PPO na prostym
    środowisku, żeby szybko sprawdzić, czy konfiguracja działa.
-2. `--impl warp` pozwala porównać wyniki z backendem MuJoCo Warp bez zmiany kodu.
+2. `--impl warp` pozwala porównać wyniki używając backendu MuJoCo Warp bez zmiany
+   kodu.
 3. `train-rsl-ppo` jest przydatne, gdy chcecie zobaczyć alternatywny algorytm
    w tej samej infrastrukturze eksperymentów.
 
@@ -147,7 +148,9 @@ pojawi się realny robot. Dla projektu z humanoidem Unitree G1 EDU-U6 oznacza to
 
 ### Praktyczne wykorzystanie w projekcie
 
-1. Wybierz środowisko z listy `registry.ALL_ENVS`, np. `G1JoystickFlatTerrain`.
+1. Wybierz środowisko z listy `registry.ALL_ENVS` (wyświetl ją poleceniem:
+   `python -c "from mujoco_playground import registry; print(registry.ALL_ENVS)"`),
+   na przykład `G1JoystickFlatTerrain`.
 2. Uruchom trening i zapisuj checkpointy:
    `train-jax-ppo --env_name G1JoystickFlatTerrain --num_timesteps 2000000`.
 3. Sprawdź wynik w symulacji, a następnie dopasuj nagrody i parametry PPO.
