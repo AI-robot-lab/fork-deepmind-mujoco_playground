@@ -13,6 +13,18 @@ Features include:
 - Non-prehensile and dexterous manipulation environments.
 - Vision-based support available via [Madrona-MJX](https://github.com/shacklettbp/madrona_mjx).
 
+## Opis w języku polskim
+
+MuJoCo Playground to kompleksowy zestaw środowisk GPU do badań nad uczeniem robotów
+oraz sim-to-real, zbudowany na bazie [MuJoCo MJX](https://github.com/google-deepmind/mujoco/tree/main/mjx).
+
+Najważniejsze możliwości:
+
+- Klasyczne środowiska sterowania z `dm_control`.
+- Środowiska lokomocji dla robotów czworonożnych i dwunożnych.
+- Manipulacja bez chwytu i manipulacja precyzyjna (dexterous).
+- Obsługa wejścia wizyjnego dzięki [Madrona-MJX](https://github.com/shacklettbp/madrona_mjx).
+
 For more details, check out the project [website](https://playground.mujoco.org/).
 
 > [!NOTE]
@@ -44,6 +56,21 @@ pip install playground
 7. Verify installation: `uv --no-config run python -c "import mujoco_playground; print('Success')"`
     * **Note**: Menagerie assets will be downloaded automatically the first time you load a locomotion or manipulation environment. You can trigger this with: `uv --no-config run python -c "from mujoco_playground import locomotion; locomotion.load('G1JoystickFlatTerrain')"`
 
+#### Wyjaśnienie kroków instalacji (PL)
+
+Poniższe kroki są identyczne z instrukcją powyżej, ale opisują *po co* wykonujemy
+poszczególne czynności:
+
+1. `uv venv --python 3.12` tworzy odizolowane środowisko, aby nie mieszać
+   bibliotek z innymi projektami.
+2. `source .venv/bin/activate` przełącza terminal na nowe środowisko.
+3. `uv pip install -U "jax[cuda12]"` dodaje wsparcie GPU, które jest potrzebne
+   do szybkiego treningu na kartach NVIDIA.
+4. `uv --no-config sync --all-extras` instaluje wszystkie wymagane pakiety (w tym
+   opcje testowe i narzędzia treningowe).
+5. `uv --no-config run python -c "import mujoco_playground; print('Success')"`
+   to szybki test, który potwierdza, że import działa bez błędów.
+
 #### Madrona-MJX (optional)
 
 For vision-based environments, please refer to the installation instructions in the [Madrona-MJX](https://github.com/shacklettbp/madrona_mjx?tab=readme-ov-file#installation) repository.
@@ -69,6 +96,15 @@ Or with `uv`:
 uv --no-config run train-jax-ppo --env_name CartpoleBalance --impl warp
 uv --no-config run train-rsl-ppo --env_name CartpoleBalance --impl warp
 ```
+
+### Szybki start dla studentów (PL)
+
+1. `train-jax-ppo --env_name CartpoleBalance` uruchamia trening PPO na prostym
+   środowisku, żeby szybko sprawdzić, czy konfiguracja działa.
+2. `--impl warp` pozwala porównać wyniki używając backendu MuJoCo Warp bez zmiany
+   kodu.
+3. `train-rsl-ppo` jest przydatne, gdy chcecie zobaczyć alternatywny algorytm
+   w tej samej infrastrukturze eksperymentów.
 
 ### Basic Tutorials
 | Colab | Description |
@@ -99,6 +135,27 @@ python learning/train_jax_ppo.py --env_name PandaPickCube --rscope_envs 16 --run
 # In a separate terminal
 python -m rscope
 ```
+
+## Zastosowanie w projekcie Unitree G1 EDU-U6
+
+MuJoCo Playground pozwala przygotować polityki sterowania w symulacji, zanim
+pojawi się realny robot. Dla projektu z humanoidem Unitree G1 EDU-U6 oznacza to:
+
+- bezpieczne trenowanie lokomocji i stabilizacji bez ryzyka uszkodzeń sprzętu,
+- łatwe porównywanie konfiguracji nagród i hiperparametrów w `learning/train_jax_ppo.py`,
+- przenoszenie wytrenowanych polityk do testów sim-to-real (np. z domenową
+  losowością dzięki `--domain_randomization`).
+
+### Praktyczne wykorzystanie w projekcie
+
+1. Wybierz środowisko z listy `registry.ALL_ENVS` (wyświetl ją poleceniem:
+   `python -c "from mujoco_playground import registry; print(registry.ALL_ENVS)"`),
+   na przykład `G1JoystickFlatTerrain`.
+2. Uruchom trening i zapisuj checkpointy:
+   `train-jax-ppo --env_name G1JoystickFlatTerrain --num_timesteps 2000000`.
+3. Sprawdź wynik w symulacji, a następnie dopasuj nagrody i parametry PPO.
+4. Gdy polityka jest stabilna, użyj jej jako punktu startowego do testów na
+   robocie Unitree G1 EDU-U6 w kontrolowanych warunkach laboratoryjnych.
 
 ## FAQ
 
