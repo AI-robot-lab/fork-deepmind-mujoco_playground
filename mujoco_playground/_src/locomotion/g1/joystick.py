@@ -12,7 +12,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-"""Joystick task for Unitree G1."""
+"""Joystick task for Unitree G1.
+
+PL (Polski): Zadanie kontroli joystickiem dla Unitree G1.
+
+OPIS DLA STUDENTÓW:
+===================
+To środowisko trenuje robota G1 do chodzenia w odpowiedzi na komendy prędkości,
+jak gdyby były sterowane joystickiem (lewo/prawo, przód/tył, obrót).
+
+KLUCZOWE KONCEPTY:
+1. Velocity Tracking: Robot uczy się podążać za zadaną prędkością
+2. Reward Shaping: Funkcja nagrody składa się z wielu komponentów
+   - Nagrody za podążanie (tracking_lin_vel, tracking_ang_vel)
+   - Kary za nieprawidłową postawę (orientation, base_height)
+   - Nagrody za naturalny chód (feet_air_time, feet_phase)
+3. Domain Randomization: Losowość parametrów dla lepszego transferu sim-to-real
+
+PRZYKŁAD UŻYCIA:
+  from mujoco_playground import locomotion
+  env = locomotion.load('G1JoystickFlatTerrain')
+  state = env.reset(jax.random.PRNGKey(0))
+  action = jax.numpy.zeros(env.action_size)  # Zero akcji = próba stania
+  state = env.step(state, action)
+"""
 
 from typing import Any, Dict, Optional, Union
 
@@ -30,85 +53,161 @@ from mujoco_playground._src.locomotion.g1 import g1_constants as consts
 
 
 def default_config() -> config_dict.ConfigDict:
+  """Return default configuration for G1 Joystick task.
+  
+  PL: Zwraca domyślną konfigurację dla zadania G1 Joystick.
+  
+  Ta konfiguracja zawiera wszystkie parametry środowiska:
+  - Parametry czasowe (ctrl_dt, sim_dt)
+  - Parametry akcji (action_scale, action_repeat)
+  - Konfigurację szumu (noise_config) - symuluje niedoskonałości sensorów
+  - Wagi nagród (reward_config) - określa co jest nagrodzone/karane
+  - Konfigurację losowych pchnięć (push_config)
+  
+  WAŻNE DLA STUDENTÓW:
+  - ctrl_dt=0.02 oznacza, że agent decyduje 50 razy na sekundę
+  - sim_dt=0.002 oznacza, że fizyka jest symulowana 500 razy na sekundę
+  - noise_config.level=1.0 włącza pełny szum sensorów (ważne dla sim-to-real!)
+  """
   return config_dict.create(
-      ctrl_dt=0.02,
-      sim_dt=0.002,
-      episode_length=1000,
-      action_repeat=1,
-      action_scale=0.5,
-      history_len=1,
-      restricted_joint_range=False,
-      soft_joint_pos_limit_factor=0.95,
+      # Parametry czasowe
+      # -----------------
+      ctrl_dt=0.02,  # PL: Okres sterowania - jak często agent podejmuje decyzje (50Hz)
+      sim_dt=0.002,  # PL: Krok symulacji fizyki (500Hz) - 10x szybciej niż sterowanie
+      episode_length=1000,  # PL: Długość epizodu w krokach (1000 * 0.02s = 20 sekund)
+      
+      # Parametry akcji
+      # ---------------
+      action_repeat=1,  # PL: Ile razy powtórzyć akcję (1 = każdy krok nowa akcja)
+      action_scale=0.5,  # PL: Skalowanie akcji (0.5 = połowa maksymalnego zakresu)
+      history_len=1,  # PL: Ile poprzednich obserwacji pamiętać
+      
+      # Ograniczenia
+      # ------------
+      restricted_joint_range=False,  # PL: Czy ograniczyć zakres stawów (False = pełny zakres)
+      soft_joint_pos_limit_factor=0.95,  # PL: Miękkie limity stawów (95% zakresu)
+      
+      # Konfiguracja szumu sensorów
+      # ---------------------------
+      # WAŻNE: Szum symuluje niedoskonałości prawdziwych czujników!
       noise_config=config_dict.create(
-          level=1.0,  # Set to 0.0 to disable noise.
+          level=1.0,  # PL: Poziom szumu (0.0=brak, 1.0=pełny) - ZAWSZE 1.0 dla sim-to-real!
           scales=config_dict.create(
-              joint_pos=0.03,
-              joint_vel=1.5,
-              gravity=0.05,
-              linvel=0.1,
-              gyro=0.2,
+              joint_pos=0.03,    # PL: Szum w pozycjach stawów (±3%)
+              joint_vel=1.5,     # PL: Szum w prędkościach stawów
+              gravity=0.05,      # PL: Szum w wektorze grawitacji (IMU)
+              linvel=0.1,        # PL: Szum w prędkości liniowej
+              gyro=0.2,          # PL: Szum w żyroskopie
           ),
       ),
+      
+      # Konfiguracja nagród
+      # -------------------
+      # To najważniejsza część - określa CO robot ma się nauczyć!
       reward_config=config_dict.create(
           scales=config_dict.create(
-              # Tracking related rewards.
-              tracking_lin_vel=1.0,
-              tracking_ang_vel=0.75,
-              # Base related rewards.
-              lin_vel_z=0.0,
-              ang_vel_xy=-0.15,
-              orientation=-2.0,
-              base_height=0.0,
-              # Energy related rewards.
-              torques=0.0,
-              action_rate=0.0,
-              energy=0.0,
-              dof_acc=0.0,
-              # Feet related rewards.
-              feet_clearance=0.0,
-              feet_air_time=2.0,
-              feet_slip=-0.25,
-              feet_height=0.0,
-              feet_phase=1.0,
-              # Other rewards.
-              alive=0.0,
-              stand_still=-1.0,
-              termination=-100.0,
-              collision=-0.1,
-              contact_force=-0.01,
-              # Pose related rewards.
-              joint_deviation_knee=-0.1,
-              joint_deviation_hip=-0.25,
-              dof_pos_limits=-1.0,
-              pose=-0.1,
+              # Nagrody za śledzenie komend (TRACKING)
+              # --------------------------------------
+              tracking_lin_vel=1.0,   # PL: Nagroda za podążanie za zadaną prędkością liniową
+              tracking_ang_vel=0.75,  # PL: Nagroda za podążanie za zadaną prędkością kątową
+              
+              # Nagrody/kary związane z bazą robota (BASE)
+              # ------------------------------------------
+              lin_vel_z=0.0,          # PL: Kara za ruch w pionie (chcemy aby szedł, nie skakał)
+              ang_vel_xy=-0.15,       # PL: Kara za przechylanie się (pitch/roll)
+              orientation=-2.0,       # PL: Kara za odchylenie od pionu (WAŻNE!)
+              base_height=0.0,        # PL: Nagroda za utrzymanie wysokości
+              
+              # Nagrody/kary energetyczne (ENERGY)
+              # -----------------------------------
+              torques=0.0,            # PL: Kara za duże momenty (oszczędzanie energii)
+              action_rate=0.0,        # PL: Kara za gwałtowne zmiany akcji (płynność)
+              energy=0.0,             # PL: Kara za zużycie energii
+              dof_acc=0.0,            # PL: Kara za przyspieszenia stawów
+              
+              # Nagrody/kary związane ze stopami (FEET)
+              # ----------------------------------------
+              feet_clearance=0.0,     # PL: Nagroda za podnoszenie stóp podczas kroku
+              feet_air_time=2.0,      # PL: Nagroda za czas lotu stopy (WAŻNE dla chodu!)
+              feet_slip=-0.25,        # PL: Kara za poślizg stopy po ziemi
+              feet_height=0.0,        # PL: Nagroda za wysokość uniesienia stopy
+              feet_phase=1.0,         # PL: Nagroda za prawidłową fazę chodu
+              
+              # Inne nagrody/kary
+              # -----------------
+              alive=0.0,              # PL: Nagroda za przetrwanie
+              stand_still=-1.0,       # PL: Kara za stanie w miejscu (chcemy ruchu!)
+              termination=-100.0,     # PL: Duża kara za upadek
+              collision=-0.1,         # PL: Kara za kolizje
+              contact_force=-0.01,    # PL: Kara za duże siły kontaktu
+              
+              # Nagrody/kary związane z postawą (POSE)
+              # ---------------------------------------
+              joint_deviation_knee=-0.1,   # PL: Kara za odchylenie od naturalnej pozycji kolan
+              joint_deviation_hip=-0.25,   # PL: Kara za odchylenie bioder
+              dof_pos_limits=-1.0,         # PL: Kara za zbliżanie się do limitów stawów
+              pose=-0.1,                   # PL: Kara za odchylenie od domyślnej postawy
           ),
-          tracking_sigma=0.25,
-          max_foot_height=0.15,
-          base_height_target=0.5,
-          max_contact_force=500.0,
+          # Parametry pomocnicze
+          tracking_sigma=0.25,        # PL: Tolerancja błędu śledzenia (im mniejsza, tym precyzyjniej)
+          max_foot_height=0.15,       # PL: Maksymalna wysokość podniesienia stopy (15cm)
+          base_height_target=0.5,     # PL: Docelowa wysokość miednicy (50cm)
+          max_contact_force=500.0,    # PL: Maksymalna dopuszczalna siła kontaktu (500N)
       ),
+      
+      # Konfiguracja losowych pchnięć (domain randomization)
+      # -----------------------------------------------------
+      # Symuluje nieprzewidziane zakłócenia (wiatr, pchnięcia, nierówności)
       push_config=config_dict.create(
-          enable=True,
-          interval_range=[5.0, 10.0],
-          magnitude_range=[0.1, 2.0],
+          enable=True,                  # PL: Włącz losowe pchnięcia
+          interval_range=[5.0, 10.0],   # PL: Co 5-10 sekund losowe pchnięcie
+          magnitude_range=[0.1, 2.0],   # PL: Siła pchnięcia 0.1-2.0 N
       ),
+      
+      # Konfiguracja komend prędkości
+      # -----------------------------
       command_config=config_dict.create(
           # Uniform distribution for command amplitude.
-          a=[1.0, 0.8, 1.0],
+          a=[1.0, 0.8, 1.0],  # PL: Amplitudy komend [vx, vy, vyaw]
           # Probability of not zeroing out new command.
-          b=[0.9, 0.25, 0.5],
+          b=[0.9, 0.25, 0.5],  # PL: Prawdopodobieństwo niezerowania [vx, vy, vyaw]
       ),
-      lin_vel_x=[-1.0, 1.0],
-      lin_vel_y=[-0.5, 0.5],
-      ang_vel_yaw=[-1.0, 1.0],
-      impl="jax",
-      nconmax=8 * 8192,
-      njmax=29 * 2 + 8 * 4,
+      
+      # Zakresy komend prędkości
+      # ------------------------
+      lin_vel_x=[-1.0, 1.0],      # PL: Prędkość do przodu/tyłu (m/s)
+      lin_vel_y=[-0.5, 0.5],      # PL: Prędkość boczna (m/s)
+      ang_vel_yaw=[-1.0, 1.0],    # PL: Prędkość obrotu (rad/s)
+      
+      # Parametry techniczne
+      # --------------------
+      impl="jax",                  # PL: Backend symulacji (jax lub warp)
+      nconmax=8 * 8192,           # PL: Maksymalna liczba kontaktów
+      njmax=29 * 2 + 8 * 4,       # PL: Maksymalna liczba ograniczeń
   )
 
 
 class Joystick(g1_base.G1Env):
-  """Track a joystick command."""
+  """Track a joystick command.
+  
+  PL: Śledź komendy z joysticka.
+  
+  To środowisko trenuje robota G1 do chodzenia zgodnie z komendami prędkości:
+  - Prędkość do przodu/tyłu (lin_vel_x)
+  - Prędkość boczna lewo/prawo (lin_vel_y)
+  - Obrót w miejscu (ang_vel_yaw)
+  
+  Robot otrzymuje nagrodę za:
+  - Podążanie za zadaną prędkością
+  - Utrzymanie stabilnej postawy
+  - Naturalny chód (podnoszenie stóp)
+  
+  Robot jest karany za:
+  - Odchylenie od pionu (przechylanie się)
+  - Poślizg stóp
+  - Zbliżanie się do limitów stawów
+  - Upadek
+  """
 
   def __init__(
       self,
@@ -116,6 +215,15 @@ class Joystick(g1_base.G1Env):
       config: config_dict.ConfigDict = default_config(),
       config_overrides: Optional[Dict[str, Union[str, int, list[Any]]]] = None,
   ):
+    """Initialize Joystick environment.
+    
+    PL: Inicjalizuje środowisko Joystick.
+    
+    Args:
+      task: Typ terenu ('flat_terrain', 'rough_terrain', etc.)
+      config: Konfiguracja środowiska (nagrody, parametry, etc.)
+      config_overrides: Nadpisania konfiguracji
+    """
     super().__init__(
         xml_path=consts.task_to_xml(task).as_posix(),
         config=config,
@@ -124,27 +232,43 @@ class Joystick(g1_base.G1Env):
     self._post_init()
 
   def _post_init(self) -> None:
+    """Post-initialization setup.
+    
+    PL: Konfiguracja po inicjalizacji.
+    
+    Ta metoda:
+    1. Wczytuje pozycję startową z keyframe "knees_bent" (kolana zgięte)
+    2. Oblicza miękkie limity stawów (zapobiegają uszkodzeniu)
+    3. Identyfikuje indeksy stawów talii (waist) do kontroli postawy
+    """
+    # Krok 1: Załaduj pozycję startową z keyframe
+    # "knees_bent" to naturalna pozycja z lekko zgiętymi kolanami
     self._init_q = jp.array(self._mj_model.keyframe("knees_bent").qpos)
     self._default_pose = jp.array(
-        self._mj_model.keyframe("knees_bent").qpos[7:]
+        self._mj_model.keyframe("knees_bent").qpos[7:]  # [7:] pomija freejoint (pozycja/orientacja bazy)
     )
 
+    # Krok 2: Oblicz miękkie limity stawów
     # Note: First joint is freejoint.
+    # PL: Pierwszy staw to freejoint (6 DOF bazy), pomijamy go [1:]
     self._lowers, self._uppers = self.mj_model.jnt_range[1:].T
-    c = (self._lowers + self._uppers) / 2
-    r = self._uppers - self._lowers
+    c = (self._lowers + self._uppers) / 2  # Środek zakresu
+    r = self._uppers - self._lowers        # Rozpiętość zakresu
+    # Miękkie limity to 95% pełnego zakresu (bezpieczniejsze dla robota)
     self._soft_lowers = c - 0.5 * r * self._config.soft_joint_pos_limit_factor
     self._soft_uppers = c + 0.5 * r * self._config.soft_joint_pos_limit_factor
 
+    # Krok 3: Znajdź indeksy stawów talii
+    # Talia (waist) kontroluje postawę górnej części ciała
     waist_indices = []
     waist_joint_names = [
-        "waist_yaw",
-        "waist_roll",
-        "waist_pitch",
+        "waist_yaw",    # PL: Obrót wokół osi pionowej
+        "waist_roll",   # PL: Przechył na boki
+        "waist_pitch",  # PL: Pochylenie do przodu/tyłu
     ]
     for joint_name in waist_joint_names:
       waist_indices.append(
-          self._mj_model.joint(f"{joint_name}_joint").qposadr - 7
+          self._mj_model.joint(f"{joint_name}_joint").qposadr - 7  # -7 bo pomijamy freejoint
       )
     self._waist_indices = jp.array(waist_indices)
 
