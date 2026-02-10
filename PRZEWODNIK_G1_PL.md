@@ -238,17 +238,28 @@ python learning/train_jax_ppo.py \
 
 ```bash
 # Przykład z wyjaśnieniem każdego parametru
+# --env_name: Nazwa środowiska
+# --num_timesteps: Całkowita liczba kroków treningu
+# --num_envs: Liczba równoległych symulacji
+# --num_evals: Ewaluacja co N aktualizacji
+# --learning_rate: Szybkość uczenia
+# --entropy_cost: Koszt entropii (eksploracja)
+# --batch_size: Rozmiar batcha
+# --unroll_length: Długość sekwencji
+# --use_tb: Używaj TensorBoard
+# --domain_randomization: WAŻNE dla sim-to-real!
+
 python learning/train_jax_ppo.py \
-    --env_name G1JoystickFlatTerrain \     # Nazwa środowiska
-    --num_timesteps 5000000 \               # Całkowita liczba kroków treningu
-    --num_envs 4096 \                       # Liczba równoległych symulacji
-    --num_evals 10 \                        # Ewaluacja co N aktualizacji
-    --learning_rate 3e-4 \                  # Szybkość uczenia
-    --entropy_cost 1e-2 \                   # Koszt entropii (eksploracja)
-    --batch_size 512 \                      # Rozmiar batcha
-    --unroll_length 20 \                    # Długość sekwencji
-    --use_tb \                              # Używaj TensorBoard
-    --domain_randomization                  # WAŻNE dla sim-to-real!
+    --env_name G1JoystickFlatTerrain \
+    --num_timesteps 5000000 \
+    --num_envs 4096 \
+    --num_evals 10 \
+    --learning_rate 3e-4 \
+    --entropy_cost 1e-2 \
+    --batch_size 512 \
+    --unroll_length 20 \
+    --use_tb \
+    --domain_randomization
 ```
 
 ### Jak dobrać parametry?

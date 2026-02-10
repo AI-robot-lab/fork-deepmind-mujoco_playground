@@ -447,7 +447,7 @@ def uruchom_wszystkie_przyklady():
                 examples[example_num - 1]()
                 return
             else:
-                print(f"\nBłąd: Numer przykładu musi być między 1 a 6")
+                print(f"\nBłąd: Numer przykładu musi być między 1 a 6, podano: {example_num}")
                 return
         except ValueError:
             print(f"\nBłąd: '{sys.argv[1]}' nie jest poprawnym numerem")
