@@ -25,6 +25,21 @@ Najważniejsze możliwości:
 - Manipulacja bez chwytu i manipulacja precyzyjna (dexterous).
 - Obsługa wejścia wizyjnego dzięki [Madrona-MJX](https://github.com/shacklettbp/madrona_mjx).
 
+### 📚 Zasoby dla studentów Politechniki Rzeszowskiej
+
+Ten fork został przygotowany specjalnie dla studentów pracujących z robotem **Unitree G1 EDU-U6**:
+
+- **[QUICK_START_PL.md](QUICK_START_PL.md)** - Szybki start (15-30 min) - zacznij tutaj! 🚀
+- **[PRZEWODNIK_G1_PL.md](PRZEWODNIK_G1_PL.md)** - Kompletny przewodnik po robocie G1 📖
+- **[przyklady_g1.py](przyklady_g1.py)** - Gotowe przykłady kodu do nauki 💻
+- **[learning/README.md](learning/README.md)** - Instrukcje treningu z tłumaczeniami 🎓
+
+**Zalecana kolejność dla nowych studentów:**
+1. Przeczytaj [QUICK_START_PL.md](QUICK_START_PL.md) i wykonaj wszystkie kroki
+2. Uruchom `python przyklady_g1.py` aby zobaczyć działające przykłady
+3. Przeczytaj [PRZEWODNIK_G1_PL.md](PRZEWODNIK_G1_PL.md) dla głębszego zrozumienia
+4. Eksperymentuj z treningiem używając [learning/README.md](learning/README.md)
+
 For more details, check out the project [website](https://playground.mujoco.org/).
 
 > [!NOTE]

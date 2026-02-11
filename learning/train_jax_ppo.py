@@ -14,7 +14,30 @@
 # ==============================================================================
 """Train a PPO agent using JAX on the specified environment.
 
-PL: Trenuje agenta PPO w JAX dla wybranego środowiska i zapisuje wyniki.
+PL (Polski): Trenowanie agenta PPO przy użyciu JAX dla wybranego środowiska.
+
+OPIS DLA STUDENTÓW:
+==================
+Ten skrypt jest głównym narzędziem do trenowania polityk sterowania robotem w symulacji.
+Używa algorytmu PPO (Proximal Policy Optimization) - jednego z najpopularniejszych
+algorytmów głębokiego uczenia ze wzmocnieniem.
+
+Co robi ten skrypt:
+1. Wczytuje środowisko symulacyjne (np. robot G1, ramię Panda, itp.)
+2. Konfiguruje parametry treningu PPO
+3. Uruchamia równoległe symulacje na GPU dla szybkiego uczenia
+4. Zapisuje checkpointy modelu w regularnych odstępach
+5. Generuje wideo z zachowaniem wytrenowanego agenta
+
+Podstawowe użycie:
+  python train_jax_ppo.py --env_name G1JoystickFlatTerrain --num_timesteps 2000000
+
+Przydatne parametry:
+  --env_name: nazwa środowiska (np. G1JoystickFlatTerrain dla robota G1)
+  --num_timesteps: ile kroków symulacji (więcej = dłuższy trening)
+  --num_envs: ile równoległych symulacji (więcej = szybszy trening, ale więcej RAM)
+  --load_checkpoint_path: ścieżka do checkpointu do kontynuacji treningu
+  --domain_randomization: włącza losowość parametrów fizyki (ważne dla sim-to-real)
 """
 
 import datetime
@@ -50,16 +73,24 @@ except ImportError:
   wandb = None
 
 
+# Konfiguracja środowiska dla obliczeń GPU (PL)
+# ===============================================
+# XLA_FLAGS: optymalizacje kompilatora XLA dla szybszych obliczeń na GPU
 xla_flags = os.environ.get("XLA_FLAGS", "")
-xla_flags += " --xla_gpu_triton_gemm_any=True"
+xla_flags += " --xla_gpu_triton_gemm_any=True"  # Używaj Triton dla mnożenia macierzy
 os.environ["XLA_FLAGS"] = xla_flags
+# Nie alokuj całej pamięci GPU z góry - pozwala na równoległe uruchamianie wielu procesów
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+# Użyj EGL do renderowania bez wyświetlacza (ważne na serwerach bez GUI)
 os.environ["MUJOCO_GL"] = "egl"
 
 # Ignore the info logs from brax
 logging.set_verbosity(logging.WARNING)
 
-# Suppress warnings
+# Wyciszenie ostrzeżeń (PL)
+# ==========================
+# Podczas treningu JAX może generować wiele ostrzeżeń technicznych, które
+# nie wpływają na działanie programu. Wyciszamy je dla czytelności.
 
 # Suppress RuntimeWarnings from JAX
 warnings.filterwarnings("ignore", category=RuntimeWarning, module="jax")
@@ -69,109 +100,154 @@ warnings.filterwarnings("ignore", category=DeprecationWarning, module="jax")
 warnings.filterwarnings("ignore", category=UserWarning, module="absl")
 
 
+# Parametry uruchamiania skryptu (PL: Flagi linii poleceń)
+# ==========================================================
+# Poniższe flagi pozwalają konfigurować trening bez edycji kodu.
+# Przykład użycia: python train_jax_ppo.py --env_name G1JoystickFlatTerrain --num_envs 2048
+
 _ENV_NAME = flags.DEFINE_string(
     "env_name",
     "LeapCubeReorient",
     f"Name of the environment. One of {', '.join(registry.ALL_ENVS)}",
+    # PL: Nazwa środowiska do treningu (np. G1JoystickFlatTerrain dla humanoidalnego robota)
 )
 _IMPL = flags.DEFINE_enum("impl", "jax", ["jax", "warp"], "MJX implementation")
+# PL: Backend symulacji - 'jax' (MJX) lub 'warp' (MuJoCo Warp)
 _PLAYGROUND_CONFIG_OVERRIDES = flags.DEFINE_string(
     "playground_config_overrides",
     None,
     "Overrides for the playground env config.",
+    # PL: Nadpisania konfiguracji środowiska w formacie JSON
 )
 _VISION = flags.DEFINE_boolean("vision", False, "Use vision input")
+# PL: Czy używać wizji (kamera) jako wejścia do polityki
 _LOAD_CHECKPOINT_PATH = flags.DEFINE_string(
     "load_checkpoint_path", None, "Path to load checkpoint from"
+    # PL: Ścieżka do checkpointu do kontynuacji treningu
 )
 _SUFFIX = flags.DEFINE_string("suffix", None, "Suffix for the experiment name")
+# PL: Dodatkowy sufiks dla nazwy eksperymentu (ułatwia organizację)
 _PLAY_ONLY = flags.DEFINE_boolean(
     "play_only", False, "If true, only play with the model and do not train"
+    # PL: Tylko odtwarzaj model bez treningu (do testowania wytrenowanej polityki)
 )
 _USE_WANDB = flags.DEFINE_boolean(
     "use_wandb",
     False,
     "Use Weights & Biases for logging (ignored in play-only mode)",
+    # PL: Czy używać Weights & Biases do logowania metryk
 )
 _USE_TB = flags.DEFINE_boolean(
     "use_tb", False, "Use TensorBoard for logging (ignored in play-only mode)"
+    # PL: Czy używać TensorBoard do logowania (lokalna alternatywa dla W&B)
 )
 _DOMAIN_RANDOMIZATION = flags.DEFINE_boolean(
     "domain_randomization", False, "Use domain randomization"
+    # PL: Losowość domenowa - zmienia parametry fizyki w każdym epizodzie
+    # (WAŻNE dla transferu sim-to-real - robot lepiej się adaptuje do rzeczywistości!)
+)
 )
 _SEED = flags.DEFINE_integer("seed", 1, "Random seed")
+# PL: Ziarno losowości - ustaw to samo dla powtarzalnych wyników
 _NUM_TIMESTEPS = flags.DEFINE_integer(
     "num_timesteps", 1_000_000, "Number of timesteps"
+    # PL: Całkowita liczba kroków symulacji (więcej = dłuższy trening, lepsza polityka)
 )
 _NUM_VIDEOS = flags.DEFINE_integer(
     "num_videos", 1, "Number of videos to record after training."
+    # PL: Ile wideo nagrać po treningu (do oceny jakości polityki)
 )
 _NUM_EVALS = flags.DEFINE_integer("num_evals", 5, "Number of evaluations")
+# PL: Ile razy oceniać politykę w trakcie treningu
 _REWARD_SCALING = flags.DEFINE_float("reward_scaling", 0.1, "Reward scaling")
+# PL: Skalowanie nagród - ważne dla stabilności uczenia
 _EPISODE_LENGTH = flags.DEFINE_integer("episode_length", 1000, "Episode length")
+# PL: Długość epizodu w krokach (1000 kroków * 0.02s = 20 sekund dla ctrl_dt=0.02)
 _NORMALIZE_OBSERVATIONS = flags.DEFINE_boolean(
     "normalize_observations", True, "Normalize observations"
+    # PL: Normalizacja obserwacji - poprawia stabilność uczenia
 )
 _ACTION_REPEAT = flags.DEFINE_integer("action_repeat", 1, "Action repeat")
+# PL: Ile razy powtórzyć tę samą akcję (zmniejsza częstotliwość decyzji)
 _UNROLL_LENGTH = flags.DEFINE_integer("unroll_length", 10, "Unroll length")
+# PL: Długość sekwencji do obliczania gradientów
 _NUM_MINIBATCHES = flags.DEFINE_integer(
     "num_minibatches", 8, "Number of minibatches"
+    # PL: Na ile części podzielić batch do aktualizacji (wpływa na stabilność)
 )
 _NUM_UPDATES_PER_BATCH = flags.DEFINE_integer(
     "num_updates_per_batch", 8, "Number of updates per batch"
+    # PL: Ile razy zaktualizować sieć na jednym batchu danych
 )
 _DISCOUNTING = flags.DEFINE_float("discounting", 0.97, "Discounting")
+# PL: Współczynnik dyskontowania (gamma) - jak ważne są przyszłe nagrody (0.97 = dość ważne)
 _LEARNING_RATE = flags.DEFINE_float("learning_rate", 5e-4, "Learning rate")
+# PL: Szybkość uczenia - za duża = niestabilne, za mała = wolne uczenie
 _ENTROPY_COST = flags.DEFINE_float("entropy_cost", 5e-3, "Entropy cost")
+# PL: Koszt entropii - zachęca do eksploracji (wyższy = więcej eksploracji)
 _NUM_ENVS = flags.DEFINE_integer("num_envs", 1024, "Number of environments")
+# PL: Liczba równoległych symulacji - więcej = szybszy trening (ale wymaga więcej GPU RAM)
 _NUM_EVAL_ENVS = flags.DEFINE_integer(
     "num_eval_envs", 128, "Number of evaluation environments"
+    # PL: Liczba środowisk do ewaluacji polityki
 )
 _BATCH_SIZE = flags.DEFINE_integer("batch_size", 256, "Batch size")
+# PL: Rozmiar batcha do uczenia
 _MAX_GRAD_NORM = flags.DEFINE_float("max_grad_norm", 1.0, "Max grad norm")
+# PL: Maksymalna norma gradientu - przycinanie zapobiega eksplozji gradientów
 _CLIPPING_EPSILON = flags.DEFINE_float(
     "clipping_epsilon", 0.2, "Clipping epsilon for PPO"
+    # PL: Epsilon dla PPO clipping - zapobiega zbyt dużym aktualizacjom polityki
 )
 _POLICY_HIDDEN_LAYER_SIZES = flags.DEFINE_list(
     "policy_hidden_layer_sizes",
     [64, 64, 64],
     "Policy hidden layer sizes",
+    # PL: Rozmiary ukrytych warstw sieci polityki [64,64,64] = 3 warstwy po 64 neurony
 )
 _VALUE_HIDDEN_LAYER_SIZES = flags.DEFINE_list(
     "value_hidden_layer_sizes",
     [64, 64, 64],
     "Value hidden layer sizes",
+    # PL: Rozmiary warstw sieci wartości (critic) - ocenia jak dobre są stany
 )
 _POLICY_OBS_KEY = flags.DEFINE_string(
     "policy_obs_key", "state", "Policy obs key"
+    # PL: Klucz obserwacji dla polityki (może być 'state' lub 'pixels' dla wizji)
 )
 _VALUE_OBS_KEY = flags.DEFINE_string("value_obs_key", "state", "Value obs key")
+# PL: Klucz obserwacji dla funkcji wartości
 _RSCOPE_ENVS = flags.DEFINE_integer(
     "rscope_envs",
     None,
     "Number of parallel environment rollouts to save for the rscope viewer",
+    # PL: Liczba środowisk do wizualizacji w rscope (narzędzie do interaktywnej wizualizacji)
 )
 _DETERMINISTIC_RSCOPE = flags.DEFINE_boolean(
     "deterministic_rscope",
     True,
     "Run deterministic rollouts for the rscope viewer",
+    # PL: Czy używać deterministycznej polityki dla rscope (bez losowości)
 )
 _RUN_EVALS = flags.DEFINE_boolean(
     "run_evals",
     True,
     "Run evaluation rollouts between policy updates.",
+    # PL: Czy uruchamiać ewaluacje między aktualizacjami (spowalnia, ale daje feedback)
 )
 _LOG_TRAINING_METRICS = flags.DEFINE_boolean(
     "log_training_metrics",
     False,
     "Whether to log training metrics and callback to progress_fn. Significantly"
     " slows down training if too frequent.",
+    # PL: Czy logować metryki treningowe (może spowolnić trening jeśli zbyt często)
 )
 _TRAINING_METRICS_STEPS = flags.DEFINE_integer(
     "training_metrics_steps",
     1_000_000,
     "Number of steps between logging training metrics. Increase if training"
     " experiences slowdown.",
+    # PL: Co ile kroków logować metryki treningowe
 )
 
 
